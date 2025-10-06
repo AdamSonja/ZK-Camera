@@ -74,6 +74,7 @@ const App = () => {
     } catch (error) {
       const message =
         error?.response?.data?.message ||
+        error?.response?.data?.error ||
         error?.message ||
         'Failed to extract metadata. Please try again.';
       setMetadataStatus({ loading: false, error: message });
@@ -106,6 +107,7 @@ const App = () => {
     } catch (error) {
       const message =
         error?.response?.data?.message ||
+        error?.response?.data?.error ||
         error?.message ||
         'Failed to generate proof. Please try again.';
       setProofStatus({ loading: false, error: message });
@@ -150,6 +152,7 @@ const App = () => {
     } catch (error) {
       const message =
         error?.response?.data?.message ||
+        error?.response?.data?.error ||
         error?.message ||
         'Verification failed. Please retry later.';
       setVerifyStatus({ loading: false, error: message });
