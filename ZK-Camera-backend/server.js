@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const exifr = require('exifr');
 const multer = require('multer');
+const fs = require('fs');
+const {commitAndSign} =require('./commit-and-sign');
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -21,7 +23,9 @@ const extractMetadataHandler = async (req, res) => {
 
     try {
         const metadata = await exifr.parse(req.file.path);
-        res.json({ success: true, metadata });
+        //Call commitAndSign
+        const result =await commitAndSign(req.file.path,metadata);
+        res.json({ success: true, metadata,...result});
     } catch (error) {
         res.status(500).json({ success: false, error: 'Failed to read metadata' });
     }
@@ -42,6 +46,8 @@ app.post('/verify', async (req, res) => {
     //Later Verify proof here 
     res.json({ success: true, verified: true })
 });
+
+
 
 if (require.main === module) {
     app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
