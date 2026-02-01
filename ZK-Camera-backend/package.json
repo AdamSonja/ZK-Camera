@@ -19,6 +19,7 @@
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
     "multer": "^2.0.2",
+    "snarkjs": "^0.7.6",
     "tweetnacl": "^1.0.3"
   }
 }

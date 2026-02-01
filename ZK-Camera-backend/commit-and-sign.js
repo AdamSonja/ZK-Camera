@@ -1,65 +1,82 @@
 const fs = require("fs");
 const crypto = require("crypto");
 const nacl = require("tweetnacl");
-const {buildPoseidon} = require("circomlibjs"); //This circomlibjs exports buildPoseidon function
+const { buildPoseidon } = require("circomlibjs");
 
-//Helper function to hash metadata using SHA-256
-function sha256Hash(bufferOrString) {
-    return crypto.createHash('sha256').update(bufferOrString).digest('hex');
+// ------Helpers ----------
+
+// SHA-256 hash
+function sha256Hash(data) {
+  return crypto.createHash("sha256").update(data).digest("hex");
 }
 
-//Converts Hexadecimal String to BigInt safely, as poseidon can work only with BigInt
-function hexToBigInt(hexString) {
-    if(hexString.startsWith('0x')) hexString = hexString.slice(2);
-    if(hexString === '') return BigInt(0);
-    return BigInt('0x' + hexString);
+// Canonical JSON (VERY IMPORTANT)
+function canonicalJSON(obj) {
+  return JSON.stringify(obj, Object.keys(obj).sort());
 }
 
-//Converts BigInt to Hexadecimal String safely
-function bigIntToHexNoPrefix(bigInt) {
-    let hex = bigInt.toString(16);
-    if(hex.length % 2) hex = '0' + hex; //Ensure even length
-    return hex;
+// Hex → BigInt
+function hexToBigInt(hex) {
+  if (hex.startsWith("0x")) hex = hex.slice(2);
+  return BigInt("0x" + hex);
 }
 
-//Converts Hexadecimal String to Uint8Array safely
-function hexToUint8Array(hexString) {
-    if(hexString.startsWith('0x')) hexString = hexString.slice(2);
-    if(hexString.length % 2) hexString = '0' + hexString; //Ensure even length
-    const len = hexString.length/2;
-    const u8 = new Uint8Array(len);
-    for(let i=0; i<len; i++) {
-        u8[i] = parseInt(hexString.slice(i*2, i*2+2), 16);
-    }
-    return u8;
+// BigInt → hex (no 0x)
+function bigIntToHexNoPrefix(bn) {
+  let hex = bn.toString(16);
+  if (hex.length % 2) hex = "0" + hex;
+  return hex;
 }
 
-async function commitAndSign(photoPath, meta){
-    //reads photo
-    const imgBytes = fs.readFileSync(photoPath);
-    //Hashes image and the metadata
-    const imgHashHex = sha256Hash(imgBytes);
-    const metaHashHex = sha256Hash(JSON.stringify(meta));
-    
-    //Build poseidon hash function
-    const poseidon = await buildPoseidon();
-    
-    //Poseidon commitment
-    const commitment = poseidon([hexToBigInt(imgHashHex),hexToBigInt(metaHashHex)]);
-    const commitmentHex = commitment.toString(16);
-    //Generate Ed25519 KeyPair (in production and IRL, load securely from storage !)
-    const seed = crypto.randomBytes(32);
-    const KeyPair = nacl.sign.keyPair.fromSeed(seed);
-    //sign Commitment
-    const commitmentBytes = hexToUint8Array(commitmentHex);
-    const signature = nacl.sign.detached(commitmentBytes, KeyPair.secretKey);
+// ---- Core Function ----------
 
-    return{
-        commitmentHex,
-        signatureHex: Buffer.from(signature).toString("hex"),
-        publicKeyHex: Buffer.from(KeyPair.publicKey).toString("hex"),
-        imgHashHex,
-        metaHashHex,
-    };
+async function commitAndSign(photoPath, metadata) {
+  // 1. Read image
+  const imageBytes = fs.readFileSync(photoPath);
+
+  // 2. Hash image + metadata (OFF-CIRCUIT)
+  const imageHashHex = sha256Hash(imageBytes);
+  const metadataHashHex = sha256Hash(canonicalJSON(metadata));
+
+  // 3. Generate nonce (CRITICAL)
+  const nonce = crypto.randomBytes(32);
+  const nonceHex = nonce.toString("hex");
+
+  // 4. Poseidon commitment
+  const poseidon = await buildPoseidon();
+  const F = poseidon.F;
+
+  const commitmentField = poseidon([
+    hexToBigInt(imageHashHex),
+    hexToBigInt(metadataHashHex),
+    hexToBigInt(nonceHex),
+  ]);
+
+  const commitmentBigInt = F.toObject(commitmentField);
+  const commitmentHex = bigIntToHexNoPrefix(commitmentBigInt);
+
+  // 5. Optional authenticity signature (NOT ZK)
+  const seed = crypto.randomBytes(32);
+  const keypair = nacl.sign.keyPair.fromSeed(seed);
+  const signature = nacl.sign.detached(
+    Buffer.from(commitmentHex, "hex"),
+    keypair.secretKey
+  );
+
+  //  PRIVATE DATA (store securely, NOT returned publicly)
+  const privateData = {
+    imageHashHex,
+    metadataHashHex,
+    nonceHex,
+  };
+
+  //  PUBLIC DATA (safe to share)
+  return {
+    commitmentHex,
+    signatureHex: Buffer.from(signature).toString("hex"),
+    publicKeyHex: Buffer.from(keypair.publicKey).toString("hex"),
+    _private: privateData, // REMOVE THIS IN PROD (for now debugging only)
+  };
 }
+
 module.exports = { commitAndSign };

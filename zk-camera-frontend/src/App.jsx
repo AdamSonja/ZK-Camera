@@ -5,11 +5,11 @@ import MetadataDisplay from './components/MetadataDisplay.jsx';
 import ProofGenerator from './components/ProofGenerator.jsx';
 import Verifier from './components/Verifier.jsx';
 import ResultCard from './components/ResultCard.jsx';
-import { extractMetadata, generateProof, verifyProof } from './api.js';
+import { uploadImage, generateProof, verifyProof } from './api.js';
 
 const steps = [
   { key: 0, label: 'Uploading' },
-  { key: 1, label: 'Extracting Metadata' },
+  { key: 1, label: 'Commitment Created' },
   { key: 2, label: 'Generating Proof' },
   { key: 3, label: 'Verified ✅' },
 ];
@@ -18,8 +18,8 @@ const App = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
 
-  const [metadata, setMetadata] = useState(null);
-  const [metadataStatus, setMetadataStatus] = useState({ loading: false, error: null });
+  const [commitmentData, setCommitmentData] = useState(null);
+  const [commitmentStatus, setCommitmentStatus] = useState({ loading: false, error: null });
 
   const [proofData, setProofData] = useState(null);
   const [proofStatus, setProofStatus] = useState({ loading: false, error: null });
@@ -28,136 +28,111 @@ const App = () => {
   const [manifest, setManifest] = useState(null);
 
   const [stepIndex, setStepIndex] = useState(-1);
-  const [verificationOutcome, setVerificationOutcome] = useState(null); // success | failure | null
+  const [verificationOutcome, setVerificationOutcome] = useState(null);
   const [verificationMessage, setVerificationMessage] = useState('');
 
   useEffect(() => () => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
   }, [previewUrl]);
 
   const handleFileSelect = useCallback((file) => {
     setSelectedFile(file);
-    setMetadata(null);
+    setCommitmentData(null);
     setProofData(null);
     setManifest(null);
     setVerificationOutcome(null);
     setVerificationMessage('');
-    setMetadataStatus({ loading: false, error: null });
+    setCommitmentStatus({ loading: false, error: null });
     setProofStatus({ loading: false, error: null });
     setVerifyStatus({ loading: false, error: null });
     setStepIndex(0);
 
-    setPreviewUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current);
-      }
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
       return URL.createObjectURL(file);
     });
   }, []);
 
-  const handleExtractMetadata = useCallback(async () => {
-    if (!selectedFile) {
-      setMetadataStatus({ loading: false, error: 'Select an image before extracting metadata.' });
-      return;
-    }
+  // STEP 1: Upload + Commitment
+  const handleUploadAndCommit = useCallback(async () => {
+    if (!selectedFile) return;
 
-    setMetadataStatus({ loading: true, error: null });
-    setVerificationOutcome(null);
-    setVerificationMessage('');
+    setCommitmentStatus({ loading: true, error: null });
 
     try {
-      const { data } = await extractMetadata(selectedFile);
-      setMetadata(data);
-      setStepIndex((prev) => Math.max(prev, 1));
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        'Failed to extract metadata. Please try again.';
-      setMetadataStatus({ loading: false, error: message });
+      const { data } = await uploadImage(selectedFile);
+
+      setCommitmentData({
+        commitment: data.commitment,
+        publicKey: data.publicKey,
+        signature: data.signature,
+      });
+
+      setStepIndex(1);
+    } catch (err) {
+      setCommitmentStatus({
+        loading: false,
+        error: err?.message || 'Failed to create commitment',
+      });
       return;
     }
 
-    setMetadataStatus({ loading: false, error: null });
+    setCommitmentStatus({ loading: false, error: null });
   }, [selectedFile]);
 
+  // STEP 2: Proof
   const handleGenerateProof = useCallback(async () => {
-    if (!metadata) {
-      setProofStatus({ loading: false, error: 'Metadata is required before generating a proof.' });
-      return;
-    }
+    if (!commitmentData) return;
 
     setProofStatus({ loading: true, error: null });
-    setVerificationOutcome(null);
-    setVerificationMessage('');
 
     try {
-      const payload = { metadata };
-      const { data } = await generateProof(payload);
+      const { data } = await generateProof({
+        commitment: commitmentData.commitment,
+      });
 
       setProofData({
-        commitmentHash: data?.commitmentHash || data?.commitment || data?.hash || null,
-        proof: data?.proof || data?.proofJson || data?.proof_data || null,
-        publicSignals: data?.public || data?.publicJson || data?.publicSignals || null,
+        commitmentHash: data.commitment || commitmentData.commitment,
+        proof: data.proof || null,
+        publicSignals: data.publicSignals || null,
       });
-      setStepIndex((prev) => Math.max(prev, 2));
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        'Failed to generate proof. Please try again.';
-      setProofStatus({ loading: false, error: message });
+
+      setStepIndex(2);
+    } catch (err) {
+      setProofStatus({
+        loading: false,
+        error: err?.message || 'Proof generation failed',
+      });
       return;
     }
 
     setProofStatus({ loading: false, error: null });
-  }, [metadata]);
+  }, [commitmentData]);
 
+  // STEP 3: Verify
   const handleVerify = useCallback(async () => {
-    if (!proofData) {
-      setVerifyStatus({ loading: false, error: 'Generate a proof before verifying.' });
-      return;
-    }
+    if (!proofData) return;
 
     setVerifyStatus({ loading: true, error: null });
-    setVerificationOutcome(null);
-    setVerificationMessage('');
 
     try {
-      const payload = {
-        proof: proofData.proof,
-        publicSignals: proofData.publicSignals,
-        commitmentHash: proofData.commitmentHash,
-      };
-
-      const { data } = await verifyProof(payload);
-      const verified = data?.verified ?? data?.isVerified ?? data?.result ?? false;
-
-      setManifest(data?.manifest || data?.manifestJson || null);
+      const { data } = await verifyProof(proofData);
+      const verified = data?.verified ?? false;
 
       if (verified) {
         setVerificationOutcome('success');
-        setVerificationMessage('Image authenticity verified successfully.');
+        setVerificationMessage('Image authenticity verified.');
         setStepIndex(3);
       } else {
         setVerificationOutcome('failure');
-        setVerificationMessage(
-          data?.message || 'Verification failed. The proof did not match the manifest.'
-        );
+        setVerificationMessage('Verification failed.');
       }
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        'Verification failed. Please retry later.';
-      setVerifyStatus({ loading: false, error: message });
+
+      setManifest(data?.manifest || null);
+    } catch (err) {
       setVerificationOutcome('failure');
-      setVerificationMessage(message);
+      setVerificationMessage(err?.message || 'Verification error');
+      setVerifyStatus({ loading: false, error: err?.message });
       return;
     }
 
@@ -172,38 +147,23 @@ const App = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-surface to-black pb-10">
       <header className="sticky top-0 z-20 border-b border-white/10 bg-black/60 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-6 py-5">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              ZK-Camera <span className="text-brand-400">|</span> Proof of Authenticity
-            </h1>
-            <p className="text-sm text-gray-400">
-              Step through zero-knowledge verification for media authenticity in real time.
-            </p>
-          </div>
+        <div className="mx-auto max-w-6xl px-6 py-5">
+          <h1 className="text-2xl font-semibold">
+            ZK-Camera <span className="text-brand-400">|</span> Proof of Authenticity
+          </h1>
 
-          <div className="space-y-3">
-            <div className="flex justify-between text-xs font-medium uppercase tracking-wide text-gray-500">
-              {steps.map((step, index) => {
-                const isActive = index <= stepIndex;
-                return (
-                  <span
-                    key={step.key}
-                    className={
-                      isActive ? 'text-brand-300' : 'text-gray-600'
-                    }
-                  >
-                    {step.label}
-                  </span>
-                );
-              })}
+          <div className="mt-4">
+            <div className="flex justify-between text-xs uppercase text-gray-500">
+              {steps.map((s, i) => (
+                <span key={s.key} className={i <= stepIndex ? 'text-brand-300' : ''}>
+                  {s.label}
+                </span>
+              ))}
             </div>
-            <div className="h-2 w-full rounded-full bg-white/10">
+            <div className="mt-2 h-2 rounded bg-white/10">
               <motion.div
-                initial={{ width: 0 }}
                 animate={{ width: `${progressPercent}%` }}
-                transition={{ ease: 'easeOut', duration: 0.4 }}
-                className="h-2 rounded-full bg-brand-500"
+                className="h-2 rounded bg-brand-500"
               />
             </div>
           </div>
@@ -215,31 +175,30 @@ const App = () => {
           selectedFile={selectedFile}
           previewUrl={previewUrl}
           onFileSelect={handleFileSelect}
-          onExtractMetadata={handleExtractMetadata}
-          isLoading={metadataStatus.loading}
+          onExtractMetadata={handleUploadAndCommit}
+          isLoading={commitmentStatus.loading}
           canProceed={Boolean(selectedFile)}
         />
 
         <MetadataDisplay
-          metadata={metadata}
-          isLoading={metadataStatus.loading}
-          error={metadataStatus.error}
+          metadata={commitmentData}
+          isLoading={commitmentStatus.loading}
+          error={commitmentStatus.error}
         />
 
         <ProofGenerator
-          metadata={metadata}
+          metadata={commitmentData}
           onGenerateProof={handleGenerateProof}
           proofData={proofData}
           isLoading={proofStatus.loading}
           error={proofStatus.error}
-          disabled={!metadata}
+          disabled={!commitmentData}
         />
 
         <Verifier
           proofData={proofData}
           onVerify={handleVerify}
           isLoading={verifyStatus.loading}
-          verificationResult={verificationOutcome}
           manifest={manifest}
           error={verifyStatus.error}
         />
