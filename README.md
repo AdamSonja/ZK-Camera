@@ -32,32 +32,7 @@ This project does not attempt deepfake detection.
 It focuses purely on cryptographic provenance.
 
 High-Level Architecture
-┌────────────┐
-│   Browser  │
-│ (Frontend) │
-└─────┬──────┘
-      │ Upload image
-      ▼
-┌────────────┐
-│  Backend   │
-│  (Node.js) │
-│            │
-│ - Extract metadata
-│ - Hash image + metadata
-│ - Generate nonce
-│ - Poseidon commitment
-│ - Generate Groth16 proof
-└─────┬──────┘
-      │ Proof + commitment
-      ▼
-┌────────────┐
-│  Verifier  │
-│ (snarkjs)  │
-└────────────┘
-
-
-Important design choice:
-All zero-knowledge proof generation happens server-side, ensuring that private inputs (witness) never leave the backend.
+<img width="1024" height="1536" alt="image" src="https://github.com/user-attachments/assets/1c933f64-0595-455c-852b-dfaa5de201eb" />
 
 Cryptographic Design
 Commitment Scheme
@@ -114,31 +89,6 @@ template CommitmentProof() {
 
 component main { public [commitment] } = CommitmentProof();
 
-Repository Structure
-ZK-Camera/
-│
-├── zk/
-│   ├── circuits/
-│   │   └── commitment.circom
-│   ├── build/
-│   │   └── commitment_js/
-│   ├── commitment_final.zkey
-│   ├── verification_key.json
-│   └── pot12_final.ptau
-│
-├── ZK-Camera-backend/
-│   ├── server.js
-│   ├── commit-and-sign.js
-│   └── package.json
-│
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── api.js
-│   │   └── components/
-│   └── package.json
-│
-└── README.md
 
 How the System Works (Step-by-Step)
 1. Image Upload
