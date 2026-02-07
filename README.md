@@ -1,55 +1,73 @@
 ZK-Camera: Zero-Knowledge Proof of Image Authenticity
 Overview
 
-ZK-Camera is a proof-of-concept system that demonstrates how zero-knowledge proofs (ZKPs) can be used to prove the authenticity of an image at capture time without revealing the image or its metadata.
+ZK-Camera is a research-oriented proof-of-concept system that demonstrates how zero-knowledge proofs (ZKPs) can be used to verify the cryptographic integrity and provenance of an image without revealing the image itself or its sensitive metadata.
 
-The core idea is to generate a cryptographic commitment to an image and its metadata, and later allow a verifier to check—via a Groth16 zero-knowledge proof—that the commitment was correctly formed, without learning any private information.
+The system allows a prover to commit to an image and normalized metadata, and later answer verifier-controlled queries (e.g., time range or location match) using a Groth16 zero-knowledge proof, revealing only a boolean result.
 
-This project focuses on correct ZK lifecycle design, witness privacy, and end-to-end system integration.
+This project focuses on:
+
+Correct ZK lifecycle design
+
+Witness privacy and trust boundaries
+
+End-to-end prover / verifier architecture
+
+It is not a deepfake detection system and does not claim real-world capture-time truth.
 
 Problem Statement
 
 Digital images are easy to copy, modify, and redistribute.
-In many applications (journalism, surveillance, forensics, research), it is important to answer:
 
-“Can we prove that an image is authentic, without revealing the image itself?”
+In many applications (journalism, surveillance, forensics, research), we want to answer questions like:
 
-Traditional solutions require revealing:
+“Can we verify that an image is authentic and bound to some metadata,
+without revealing the image or the metadata itself?”
 
-the image
+Traditional approaches require:
 
-metadata (timestamp, device info)
+Revealing the image
 
-or trusting a centralized authority
+Revealing EXIF metadata
+
+Trusting a centralized authority
 
 This project explores a privacy-preserving alternative using zero-knowledge proofs.
 
 Core Claim
 
-A prover can convince a verifier that an image hash and its metadata were committed correctly at capture time, without revealing the image or metadata.
+A prover can convince a verifier that:
 
-This project does not attempt deepfake detection.
-It focuses purely on cryptographic provenance.
+“An image and some hidden metadata were cryptographically committed together,
+and the answer to a verifier’s query over that metadata is true or false,
+without revealing the image or the metadata.”
+
+The system proves consistency and non-tampering after commitment, not real-world truth.
 
 High-Level Architecture
-<img width="1024" height="1536" alt="image" src="https://github.com/user-attachments/assets/1c933f64-0595-455c-852b-dfaa5de201eb" />
+flowchart LR
+
 
 Cryptographic Design
 Commitment Scheme
 
 Hash function: Poseidon (ZK-friendly)
 
-Inputs (private):
+Private inputs (witness):
 
-SHA-256(image)
+imageHash = SHA-256(image bytes)
 
-SHA-256(metadata)
+timestamp = normalized UNIX epoch seconds
 
-Random nonce
+stateCode = integer mapping of Indian states
 
-Output (public):
+nonce = cryptographically secure random value
 
-Poseidon(imageHash, metadataHash, nonce)
+Public output:
+
+commitment = Poseidon(imageHash, timestamp, stateCode, nonce)
+
+The commitment binds the image and metadata together in a tamper-evident way.
 
 Zero-Knowledge Proof
 
@@ -59,165 +77,149 @@ Proof system: Groth16
 
 Curve: BN128
 
-Public input: commitment
+Public Inputs
 
-Private inputs: image hash, metadata hash, nonce
+commitment
 
-The proof asserts:
+Verifier-controlled query parameters:
 
-“I know private values that hash to this public commitment.”
+minTimestamp
 
-Circuit (commitment.circom)
-pragma circom 2.1.8;
+maxTimestamp
 
-include "circomlib/poseidon.circom";
+expectedState
 
-template CommitmentProof() {
-    signal input imageHash;
-    signal input metadataHash;
-    signal input nonce;
-    signal input commitment;
+Private Inputs
 
-    component poseidon = Poseidon(3);
+imageHash
 
-    poseidon.inputs[0] <== imageHash;
-    poseidon.inputs[1] <== metadataHash;
-    poseidon.inputs[2] <== nonce;
+timestamp
 
-    commitment === poseidon.out;
-}
+stateCode
 
-component main { public [commitment] } = CommitmentProof();
+nonce
 
+Public Output
 
-How the System Works (Step-by-Step)
-1. Image Upload
+valid ∈ {0, 1}
 
-User uploads an image via the frontend.
+The circuit computes:
 
-Image never leaves the backend after processing.
-
-2. Commitment Generation (Backend)
-
-Extract EXIF metadata.
-
-Compute:
-
-imageHash = SHA256(image)
-
-metadataHash = SHA256(metadata)
-
-nonce = random
-
-Compute Poseidon commitment.
-
-3. Proof Generation (Backend)
-
-Witness is created immediately.
-
-Groth16 proof is generated using snarkjs.
-
-Proof and public commitment are returned.
-
-4. Verification
-
-Verifier checks the proof against the public commitment.
-
-No private data is revealed.
-
-How to Run the Project
-Prerequisites
-
-Node.js ≥ 18
-
-npm
-
-circom 2.1.8
-
-snarkjs
-
-1️ Compile the Circuit
-cd zk
-mkdir -p build
-
-circom circuits/commitment.circom \
-  --r1cs \
-  --wasm \
-  --sym \
-  -o build
-
-2️  Groth16 Setup
-snarkjs groth16 setup \
-  build/commitment.r1cs \
-  pot12_final.ptau \
-  commitment_0000.zkey
-
-snarkjs zkc commitment_0000.zkey commitment_final.zkey
-snarkjs zkev commitment_final.zkey verification_key.json
-
-3️  Run Backend
-cd ZK-Camera-backend
-npm install
-node server.js
+valid = (timestamp ∈ [minTimestamp, maxTimestamp])
+        AND
+        (stateCode == expectedState)
 
 
-Backend runs at:
+The proof always verifies if the witness is valid.
+The truth value of the query is revealed only via the public output, preventing information leakage via proof failure.
 
-http://localhost:4000
+System Workflow
+1. Image Upload (/upload)
 
-4️  Run Frontend
-cd frontend
-npm install
-npm run dev
+User uploads an image
+
+Backend:
+
+Hashes image bytes
+
+Extracts and normalizes metadata
+
+Generates a random nonce
+
+Computes Poseidon commitment
+
+Private witness is stored in MongoDB
+
+Only the commitment is returned
+
+2. Query-Driven Proof Generation (/prove/query)
+
+Verifier specifies a query (time range, state)
+
+Backend:
+
+Loads private witness using commitment
+
+Generates Groth16 proof for that query
+
+Returns:
+
+proof
+
+publicSignals (contains valid)
+
+3. Verification (/verify/query)
+
+Verifier submits proof and publicSignals
+
+Cryptographic verification is performed
+
+Result:
+
+{ valid: true }
+
+{ valid: false }
+
+or "Invalid proof / proof not authentic"
+
+Verification Path
+
+The authoritative end-to-end verification path is implemented and validated in the backend:
+
+/upload → /prove/query → /verify/query
 
 
-Open browser at:
+This flow is fully testable via Postman.
 
-http://localhost:5173
+The frontend is a visualization layer under active integration and does not affect cryptographic correctness.
 
 Security & Design Notes
 
-Private inputs (witness) never leave the backend.
+Private witness data never leaves the backend
 
-Frontend never imports snarkjs or runs cryptography.
+Frontend never performs cryptographic operations
 
-Groth16 trusted setup is acknowledged.
+Proof generation is server-side only
 
-This is a demonstration system, not production-hardened.
+Groth16 trusted setup is acknowledged
+
+Proof generation succeeds regardless of query result to preserve privacy
 
 Limitations
 
-Trusted setup required (Groth16).
+Does not prove real-world capture-time truth
 
-No timestamp oracle integration.
+EXIF metadata can be forged before upload
 
-No on-chain verification.
+Groth16 requires trusted setup
 
-No protection against camera-side compromise.
+No on-chain verification
+
+No protection against adaptive probing without rate-limits
 
 Future Work
 
-Timestamp commitments
+Capture-time attestations (camera-signed metadata)
+
+Query rate-limiting and anti-probing defenses
 
 On-chain verification (Ethereum / Starknet)
 
-PLONK or transparent proof systems
+Transparent proof systems (PLONK)
 
-Recursive proofs for media chains
-
-Adversarial metadata models
+Recursive proofs for media provenance chains
 
 Motivation
 
 This project was built to explore:
 
-privacy-preserving provenance
+Privacy-preserving provenance
 
-zero-knowledge system design
+Correct zero-knowledge system design
 
-cryptographic correctness beyond tutorials
+End-to-end ZK integration beyond tutorials
 
-It is intended as a research-oriented learning project.
+It is intended as a research and learning project, not a production-ready system.
 
 Author
 
