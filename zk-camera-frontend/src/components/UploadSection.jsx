@@ -9,6 +9,8 @@ const UploadSection = ({
   onExtractMetadata,
   isLoading,
   canProceed,
+  stateValue,
+  setStateValue,
 }) => {
   const fileInputRef = useRef(null);
 
@@ -79,6 +81,15 @@ const UploadSection = ({
         )}
         Extract Metadata
       </button>
+      <div className="mt-3">
+        <label className="block text-xs text-gray-300 mb-1">State (if EXIF missing)</label>
+        <input
+          value={stateValue || ''}
+          onChange={(e) => setStateValue && setStateValue(e.target.value)}
+          placeholder="e.g. Odisha"
+          className="w-full rounded bg-black/60 px-3 py-2 text-sm text-gray-100 border border-white/5"
+        />
+      </div>
     </motion.section>
   );
 };

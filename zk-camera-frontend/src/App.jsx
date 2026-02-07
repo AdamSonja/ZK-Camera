@@ -5,7 +5,7 @@ import MetadataDisplay from "./components/MetadataDisplay.jsx";
 import ProofGenerator from "./components/ProofGenerator.jsx";
 import Verifier from "./components/Verifier.jsx";
 import ResultCard from "./components/ResultCard.jsx";
-import { uploadImage, verifyProof } from "./api.js";
+import { uploadImage, proveQuery, verifyProof } from "./api.js";
 
 const steps = [
   { key: 0, label: "Uploading" },
@@ -20,6 +20,12 @@ export default function App() {
 
   const [commitmentData, setCommitmentData] = useState(null);
   const [proofData, setProofData] = useState(null);
+  const [minTimestamp, setMinTimestamp] = useState("");
+  const [maxTimestamp, setMaxTimestamp] = useState("");
+  const [expectedState, setExpectedState] = useState("");
+  const [uploadStateValue, setUploadStateValue] = useState("");
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
 
   const [stepIndex, setStepIndex] = useState(-1);
   const [verificationOutcome, setVerificationOutcome] = useState(null);
@@ -43,38 +49,95 @@ export default function App() {
     });
   }, []);
 
-  // Upload + Proof (ONE STEP)
+  // Upload (commitment only)
   const handleUpload = useCallback(async () => {
     if (!selectedFile) return;
 
-    const { data } = await uploadImage(selectedFile);
+    // Old behaviour: the frontend previously expected the backend to return a proof
+    // together with the upload. That is incorrect for the new API: /upload only
+    // returns the commitment. Proofs must be generated later via /prove/query.
+    setUploadLoading(true);
+    setUploadError(null);
+    try {
+      const { data } = await uploadImageWithState(selectedFile, { state: uploadStateValue });
+      // Store only the commitment in state. Do NOT expect proof/publicSignals here.
+      setCommitmentData({ commitment: data.commitment });
+      setProofData(null);
 
-    setCommitmentData({ commitment: data.commitment });
-    setProofData({
-      proof: data.proof,
-      publicSignals: data.publicSignals,
-    });
-
-    setStepIndex(2);
+      // Advance to 'Commitment Created'
+      setStepIndex(1);
+    } catch (err) {
+      console.error(err);
+      setUploadError(err?.response?.data?.error || err.message || 'Upload failed');
+    } finally {
+      setUploadLoading(false);
+    }
   }, [selectedFile]);
 
   const handleVerify = useCallback(async () => {
-    if (!proofData) return;
+    // Verify flow now does two things:
+    // 1) If a proof has not been generated yet for the stored commitment,
+    //    call /prove/query to request a proof for the verifier-specified query.
+    // 2) Call /verify/query with the proof+publicSignals and show the boolean result.
 
-    const { data } = await verifyProof({
-      proof: proofData.proof,
-      publicSignals: proofData.publicSignals,
-    });
-
-    if (data.verified) {
-      setVerificationOutcome("success");
-      setVerificationMessage("Image authenticity verified.");
-      setStepIndex(3);
-    } else {
+    if (!commitmentData || !commitmentData.commitment) {
       setVerificationOutcome("failure");
-      setVerificationMessage("Verification failed.");
+      setVerificationMessage("No commitment available. Upload an image first.");
+      return;
     }
-  }, [proofData]);
+
+    try {
+      // Ensure verifier provided query parameters
+      if (!minTimestamp || !maxTimestamp || !expectedState) {
+        setVerificationOutcome("failure");
+        setVerificationMessage("Please provide minTimestamp, maxTimestamp and expectedState before verifying.");
+        return;
+      }
+
+      // Convert timestamp inputs (ISO or numeric) into epoch seconds integers
+      const parseToEpoch = (v) => {
+        // if it's numeric string, use it directly
+        if (/^\d+$/.test(v)) return Number(v);
+        const d = new Date(v);
+        return Math.floor(d.getTime() / 1000);
+      };
+
+      const minTsNum = parseToEpoch(minTimestamp);
+      const maxTsNum = parseToEpoch(maxTimestamp);
+      const expectedStateNum = Number(expectedState);
+
+      // If no proof yet, request proof generation from server
+      let localProofData = proofData;
+      if (!localProofData) {
+        const { data: proveRes } = await proveQuery({
+          commitment: commitmentData.commitment,
+          minTimestamp: minTsNum,
+          maxTimestamp: maxTsNum,
+          expectedState: expectedStateNum,
+        });
+        localProofData = { proof: proveRes.proof, publicSignals: proveRes.publicSignals, commitmentHash: commitmentData.commitment };
+        setProofData(localProofData);
+        setStepIndex(2);
+      }
+
+      // Use the (newly-created) proofData to verify
+      const { data: verifyRes } = await verifyProof({ proof: localProofData.proof, publicSignals: localProofData.publicSignals });
+
+      const validBool = (verifyRes && (verifyRes.valid === true || verifyRes.valid === 'true' || verifyRes.valid === 1));
+      if (validBool) {
+        setVerificationOutcome("success");
+        setVerificationMessage("Image authenticity verified.");
+        setStepIndex(3);
+      } else {
+        setVerificationOutcome("failure");
+        setVerificationMessage("Verification failed.");
+      }
+    } catch (err) {
+      console.error(err);
+      setVerificationOutcome("failure");
+      setVerificationMessage(err?.response?.data?.error || err.message || "Verification failed");
+    }
+  }, [proofData, commitmentData, minTimestamp, maxTimestamp, expectedState]);
 
   const progressPercent = useMemo(
     () => ((stepIndex + 1) / steps.length) * 100,
@@ -103,13 +166,25 @@ export default function App() {
           onFileSelect={handleFileSelect}
           onExtractMetadata={handleUpload}
           canProceed={Boolean(selectedFile)}
+          isLoading={uploadLoading}
+          stateValue={uploadStateValue}
+          setStateValue={setUploadStateValue}
         />
 
         <MetadataDisplay metadata={commitmentData} />
 
         <ProofGenerator proofData={proofData} disabled />
 
-        <Verifier proofData={proofData} onVerify={handleVerify} />
+        <Verifier
+          proofData={proofData}
+          onVerify={handleVerify}
+          minTimestamp={minTimestamp}
+          setMinTimestamp={setMinTimestamp}
+          maxTimestamp={maxTimestamp}
+          setMaxTimestamp={setMaxTimestamp}
+          expectedState={expectedState}
+          setExpectedState={setExpectedState}
+        />
 
         <div className="lg:col-span-2">
           <ResultCard status={verificationOutcome} message={verificationMessage} />

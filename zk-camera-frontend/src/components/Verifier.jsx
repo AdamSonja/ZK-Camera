@@ -12,7 +12,7 @@ const JsonViewer = ({ title, data }) => (
   </details>
 );
 
-const Verifier = ({ proofData, onVerify, isLoading, manifest, error }) => (
+const Verifier = ({ proofData, onVerify, isLoading, manifest, error, minTimestamp, setMinTimestamp, maxTimestamp, setMaxTimestamp, expectedState, setExpectedState }) => (
   <motion.section
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
@@ -27,10 +27,21 @@ const Verifier = ({ proofData, onVerify, isLoading, manifest, error }) => (
       Submit the generated proof to confirm image authenticity against the expected manifest.
     </p>
 
+    <div className="mt-4 space-y-2">
+      <label className="block text-xs text-gray-300">Min timestamp (ISO or seconds)</label>
+      <input value={minTimestamp || ''} onChange={(e) => setMinTimestamp && setMinTimestamp(e.target.value)} className="w-full rounded bg-black/60 px-3 py-2 text-sm text-gray-100 border border-white/5" />
+
+      <label className="block text-xs text-gray-300">Max timestamp (ISO or seconds)</label>
+      <input value={maxTimestamp || ''} onChange={(e) => setMaxTimestamp && setMaxTimestamp(e.target.value)} className="w-full rounded bg-black/60 px-3 py-2 text-sm text-gray-100 border border-white/5" />
+
+      <label className="block text-xs text-gray-300">Expected state (integer code)</label>
+      <input value={expectedState || ''} onChange={(e) => setExpectedState && setExpectedState(e.target.value)} className="w-full rounded bg-black/60 px-3 py-2 text-sm text-gray-100 border border-white/5" />
+    </div>
+
     <button
       type="button"
       onClick={onVerify}
-      disabled={!proofData || isLoading}
+      disabled={isLoading}
       className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 font-medium text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:bg-gray-600"
     >
       {isLoading && (

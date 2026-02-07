@@ -10,7 +10,19 @@ export const uploadImage = (file) => {
   return api.post("/upload", formData);
 };
 
+// optional second arg 'opts' can include { state }
+export const uploadImageWithState = (file, opts = {}) => {
+  const formData = new FormData();
+  formData.append("photo", file);
+  if (opts.state) formData.append("state", opts.state);
+  if (opts.timestamp) formData.append("timestamp", opts.timestamp);
+  return api.post("/upload", formData);
+};
+
+export const proveQuery = (payload) =>
+  api.post("/prove/query", payload);
+
 export const verifyProof = (payload) =>
-  api.post("/verify", payload);
+  api.post("/verify/query", payload);
 
 export default api;

@@ -10,6 +10,9 @@ const MetadataDisplay = ({ metadata, isLoading, error }) => (
 
     {isLoading && <p className="text-sm text-gray-300">Creating commitment…</p>}
     {error && <p className="text-sm text-red-400">{error}</p>}
+    {!isLoading && !error && metadata && metadata.commitment && (
+      <p className="text-sm text-green-300 mt-2">Commitment created.</p>
+    )}
 
     {!isLoading && !metadata && (
       <p className="text-sm text-gray-400">
