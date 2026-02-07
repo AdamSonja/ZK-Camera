@@ -1,30 +1,30 @@
 ZK-Camera: Zero-Knowledge Proof of Image Authenticity
 Overview
 
-ZK-Camera is a research-oriented proof-of-concept system that demonstrates how zero-knowledge proofs (ZKPs) can be used to verify the cryptographic integrity and provenance of an image without revealing the image itself or its sensitive metadata.
+ZK-Camera is a research-oriented proof-of-concept system that demonstrates how Zero-Knowledge Proofs (ZKPs) can be used to verify the cryptographic integrity and provenance of an image without revealing the image itself or its sensitive metadata.
 
-The system allows a prover to commit to an image and normalized metadata, and later answer verifier-controlled queries (e.g., time range or location match) using a Groth16 zero-knowledge proof, revealing only a boolean result.
+The system allows a prover to commit to an image and normalized metadata, and later answer verifier-controlled queries (such as time range or location match) using a Groth16 zero-knowledge proof, revealing only a boolean result.
 
 This project focuses on:
 
-Correct ZK lifecycle design
+Correct zero-knowledge lifecycle design
 
 Witness privacy and trust boundaries
 
-End-to-end prover / verifier architecture
+End-to-end prover / verifier system architecture
 
-It is not a deepfake detection system and does not claim real-world capture-time truth.
+⚠️ This is not a deepfake detection system and does not claim real-world capture-time truth.
 
 Problem Statement
 
-Digital images are easy to copy, modify, and redistribute.
+Digital images are trivial to copy, edit, and redistribute.
 
-In many applications (journalism, surveillance, forensics, research), we want to answer questions like:
+In domains such as journalism, surveillance, forensics, and research, a common requirement is to answer:
 
 “Can we verify that an image is authentic and bound to some metadata,
 without revealing the image or the metadata itself?”
 
-Traditional approaches require:
+Traditional approaches require at least one of the following:
 
 Revealing the image
 
@@ -42,11 +42,10 @@ A prover can convince a verifier that:
 and the answer to a verifier’s query over that metadata is true or false,
 without revealing the image or the metadata.”
 
-The system proves consistency and non-tampering after commitment, not real-world truth.
+The system proves consistency and non-tampering after commitment,
+not real-world truth or capture-time authenticity.
 
 High-Level Architecture
-flowchart LR
-
 
 Cryptographic Design
 Commitment Scheme
@@ -89,7 +88,7 @@ maxTimestamp
 
 expectedState
 
-Private Inputs
+Private Inputs (Witness)
 
 imageHash
 
@@ -103,15 +102,15 @@ Public Output
 
 valid ∈ {0, 1}
 
-The circuit computes:
-
-valid = (timestamp ∈ [minTimestamp, maxTimestamp])
-        AND
-        (stateCode == expectedState)
+Circuit Logic
+valid =
+  (minTimestamp ≤ timestamp ≤ maxTimestamp)
+  AND
+  (stateCode == expectedState)
 
 
 The proof always verifies if the witness is valid.
-The truth value of the query is revealed only via the public output, preventing information leakage via proof failure.
+The truth value of the query is revealed only through valid, preventing metadata leakage via proof failure.
 
 System Workflow
 1. Image Upload (/upload)
@@ -138,9 +137,9 @@ Verifier specifies a query (time range, state)
 
 Backend:
 
-Loads private witness using commitment
+Loads private witness using the commitment
 
-Generates Groth16 proof for that query
+Generates a Groth16 proof for that query
 
 Returns:
 
@@ -150,7 +149,11 @@ publicSignals (contains valid)
 
 3. Verification (/verify/query)
 
-Verifier submits proof and publicSignals
+Verifier submits:
+
+proof
+
+publicSignals
 
 Cryptographic verification is performed
 
@@ -164,14 +167,17 @@ or "Invalid proof / proof not authentic"
 
 Verification Path
 
-The authoritative end-to-end verification path is implemented and validated in the backend:
+The authoritative end-to-end verification flow is implemented entirely in the backend:
 
 /upload → /prove/query → /verify/query
 
 
 This flow is fully testable via Postman.
 
-The frontend is a visualization layer under active integration and does not affect cryptographic correctness.
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/01d6803d-71e9-45aa-8c72-a6140c1d4f6b" />
+
+
+The frontend acts as a visualization layer and does not affect cryptographic correctness.
 
 Security & Design Notes
 
@@ -179,11 +185,11 @@ Private witness data never leaves the backend
 
 Frontend never performs cryptographic operations
 
-Proof generation is server-side only
+Proof generation is strictly server-side
 
-Groth16 trusted setup is acknowledged
+Groth16 trusted setup is explicitly acknowledged
 
-Proof generation succeeds regardless of query result to preserve privacy
+Proof generation succeeds regardless of query outcome to preserve privacy
 
 Limitations
 
