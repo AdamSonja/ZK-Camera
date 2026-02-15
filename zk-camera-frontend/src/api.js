@@ -7,15 +7,7 @@ const api = axios.create({
 export const uploadImage = (file) => {
   const formData = new FormData();
   formData.append("photo", file);
-  return api.post("/upload", formData);
-};
 
-// optional second arg 'opts' can include { state }
-export const uploadImageWithState = (file, opts = {}) => {
-  const formData = new FormData();
-  formData.append("photo", file);
-  if (opts.state) formData.append("state", opts.state);
-  if (opts.timestamp) formData.append("timestamp", opts.timestamp);
   return api.post("/upload", formData);
 };
 

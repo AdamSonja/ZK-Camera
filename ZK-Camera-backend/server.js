@@ -16,38 +16,29 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
-// ---------- ZK PATHS (defaults, override with env) ----------
-const WASM_PATH = process.env.WASM_PATH || path.resolve(__dirname, "../zk/build/commitment_query_js/commitment_query.wasm");
-const ZKEY_PATH = process.env.ZKEY_PATH || path.resolve(__dirname, "../zk/commitment_query_final.zkey");
-let VK_PATH = process.env.VK_PATH || path.resolve(__dirname, "../zk/verification_key_commitment_query.json");
+// ---------- ZK PATHS ----------
+const WASM_PATH =
+  process.env.WASM_PATH ||
+  path.resolve(__dirname, "../zk/build/commitment_query_js/commitment_query.wasm");
 
-// fallback: if that verification key doesn't exist, use existing verification_key.json
+const ZKEY_PATH =
+  process.env.ZKEY_PATH ||
+  path.resolve(__dirname, "../zk/commitment_query_final.zkey");
+
+let VK_PATH =
+  process.env.VK_PATH ||
+  path.resolve(__dirname, "../zk/verification_key_commitment_query.json");
+
 if (!fs.existsSync(VK_PATH)) {
   const fallback = path.resolve(__dirname, "../zk/verification_key.json");
   if (fs.existsSync(fallback)) VK_PATH = fallback;
 }
 
-// sanity
 console.log("WASM exists:", fs.existsSync(WASM_PATH));
 console.log("ZKEY exists:", fs.existsSync(ZKEY_PATH));
 console.log("VK exists:", fs.existsSync(VK_PATH));
 
-// ---------- State codes (canonical mapping) ----------
-const STATE_CODES_PATH = path.resolve(__dirname, "../zk/state_codes.json");
-let STATE_CODES = {};
-if (fs.existsSync(STATE_CODES_PATH)) {
-  STATE_CODES = JSON.parse(fs.readFileSync(STATE_CODES_PATH, "utf8"));
-}
-
-function lookupStateCode(name) {
-  if (!name) return null;
-  // try direct match, then case-insensitive
-  if (STATE_CODES[name]) return STATE_CODES[name];
-  const key = Object.keys(STATE_CODES).find(k => k.toLowerCase() === name.toLowerCase());
-  return key ? STATE_CODES[key] : null;
-}
-
-// ---------- MongoDB (store private witness values) ----------
+// ---------- MongoDB ----------
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017";
 const MONGO_DB = process.env.MONGO_DB || "zk_camera";
 const MONGO_COLLECTION = process.env.MONGO_COLLECTION || "witnesses";
@@ -56,62 +47,79 @@ let dbClient;
 let witnessesCol;
 
 async function connectMongo() {
-  dbClient = new MongoClient(MONGO_URI, { useUnifiedTopology: true });
+  dbClient = new MongoClient(MONGO_URI);
   await dbClient.connect();
   const db = dbClient.db(MONGO_DB);
   witnessesCol = db.collection(MONGO_COLLECTION);
-  // index on commitment for fast lookup
   await witnessesCol.createIndex({ commitment: 1 }, { unique: true });
-  console.log("Connected to MongoDB", MONGO_URI, "DB:", MONGO_DB);
+  console.log("Connected to MongoDB");
 }
 
-connectMongo().catch(err => {
+connectMongo().catch((err) => {
   console.error("MongoDB connection failed:", err);
   process.exit(1);
 });
 
-// Helper: normalize timestamp from EXIF Date objects or strings
-function normalizeTimestamp(metadata, body) {
-  // Allow override from form field body.timestamp (seconds or ISO)
-  if (body && body.timestamp) {
-    const asNum = Number(body.timestamp);
-    if (!Number.isNaN(asNum)) return Math.floor(asNum);
-    const d = new Date(body.timestamp);
-    if (!Number.isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+// ---------- STRICT TIMESTAMP EXTRACTION ----------
+function extractTimestamp(metadata) {
+  if (!metadata) return null;
+
+  const candidate =
+    metadata.DateTimeOriginal ||
+    metadata.CreateDate ||
+    metadata.ModifyDate ||
+    metadata.DateTime;
+
+  if (!candidate) return null;
+
+  const d = candidate instanceof Date ? candidate : new Date(candidate);
+  if (Number.isNaN(d.getTime())) return null;
+
+  return Math.floor(d.getTime() / 1000);
+}
+
+// ---------- GPS → STATE MAPPING (ALL 28 STATES) ----------
+function mapGPSToState(metadata) {
+  if (!metadata || metadata.latitude == null || metadata.longitude == null) {
+    return null;
   }
 
-  // Try EXIF fields (exifr commonly returns Date objects on DateTimeOriginal)
-  const candidates = [metadata && (metadata.DateTimeOriginal || metadata.CreateDate || metadata.ModifyDate || metadata.DateTime)];
-  for (const c of candidates) {
-    if (!c) continue;
-    const d = (c instanceof Date) ? c : new Date(c);
-    if (!Number.isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
-  }
+  const lat = metadata.latitude;
+  const lon = metadata.longitude;
+
+  if (lat >= 12.6 && lat <= 19.9 && lon >= 76.7 && lon <= 84.8) return 1;  // Andhra Pradesh
+  if (lat >= 26.6 && lat <= 29.4 && lon >= 91.2 && lon <= 97.4) return 2;  // Arunachal Pradesh
+  if (lat >= 24.0 && lat <= 27.9 && lon >= 89.7 && lon <= 96.0) return 3;  // Assam
+  if (lat >= 24.0 && lat <= 27.5 && lon >= 83.3 && lon <= 88.1) return 4;  // Bihar
+  if (lat >= 17.8 && lat <= 24.1 && lon >= 80.2 && lon <= 84.4) return 5;  // Chhattisgarh
+  if (lat >= 14.9 && lat <= 15.8 && lon >= 73.6 && lon <= 74.2) return 6;  // Goa
+  if (lat >= 20.1 && lat <= 24.7 && lon >= 68.1 && lon <= 74.5) return 7;  // Gujarat
+  if (lat >= 27.6 && lat <= 30.9 && lon >= 74.5 && lon <= 77.6) return 8;  // Haryana
+  if (lat >= 30.3 && lat <= 33.2 && lon >= 75.6 && lon <= 79.1) return 9;  // Himachal Pradesh
+  if (lat >= 21.9 && lat <= 25.3 && lon >= 83.3 && lon <= 87.9) return 10; // Jharkhand
+  if (lat >= 8.4  && lat <= 18.9 && lon >= 74.0 && lon <= 78.6) return 11; // Karnataka
+  if (lat >= 8.1  && lat <= 12.8 && lon >= 74.8 && lon <= 77.4) return 12; // Kerala
+  if (lat >= 21.0 && lat <= 26.9 && lon >= 74.0 && lon <= 82.8) return 13; // Madhya Pradesh
+  if (lat >= 15.6 && lat <= 22.1 && lon >= 72.6 && lon <= 80.9) return 14; // Maharashtra
+  if (lat >= 23.8 && lat <= 25.7 && lon >= 93.0 && lon <= 94.8) return 15; // Manipur
+  if (lat >= 25.0 && lat <= 26.1 && lon >= 89.8 && lon <= 92.8) return 16; // Meghalaya
+  if (lat >= 21.9 && lat <= 24.5 && lon >= 92.2 && lon <= 93.5) return 17; // Mizoram
+  if (lat >= 25.2 && lat <= 27.0 && lon >= 93.5 && lon <= 95.3) return 18; // Nagaland
+  if (lat >= 17.8 && lat <= 22.6 && lon >= 81.4 && lon <= 87.5) return 19; // Odisha
+  if (lat >= 29.5 && lat <= 32.5 && lon >= 73.8 && lon <= 76.9) return 20; // Punjab
+  if (lat >= 23.0 && lat <= 30.2 && lon >= 69.3 && lon <= 78.3) return 21; // Rajasthan
+  if (lat >= 27.0 && lat <= 28.1 && lon >= 88.0 && lon <= 88.9) return 22; // Sikkim
+  if (lat >= 8.0  && lat <= 13.5 && lon >= 76.0 && lon <= 80.3) return 23; // Tamil Nadu
+  if (lat >= 15.8 && lat <= 19.9 && lon >= 77.2 && lon <= 81.0) return 24; // Telangana
+  if (lat >= 22.9 && lat <= 24.6 && lon >= 91.1 && lon <= 92.3) return 25; // Tripura
+  if (lat >= 23.8 && lat <= 30.4 && lon >= 77.1 && lon <= 84.6) return 26; // Uttar Pradesh
+  if (lat >= 28.7 && lat <= 31.5 && lon >= 77.6 && lon <= 81.0) return 27; // Uttarakhand
+  if (lat >= 21.5 && lat <= 27.2 && lon >= 85.8 && lon <= 89.9) return 28; // West Bengal
+
   return null;
 }
 
-// Helper: determine state code from EXIF or request body
-function determineStateCode(metadata, body) {
-  // Override from form field
-  if (body && body.state) {
-    const code = lookupStateCode(body.state);
-    if (code) return code;
-  }
-
-  // Try common EXIF fields (may not exist in typical camera EXIF)
-  const possible = [metadata && metadata.State, metadata && metadata.Province, metadata && metadata.City, metadata && metadata.Location];
-  for (const p of possible) {
-    if (!p) continue;
-    const code = lookupStateCode(p);
-    if (code) return code;
-  }
-
-  // If GPS coords are available, server cannot reliably map to state without geodata.
-  // We explicitly do NOT perform online reverse geocoding here for privacy and reproducibility.
-  return null;
-}
-
-// ---------- UPLOAD: accept photo, normalize metadata, compute commitment, store witness ----------
+// ---------- UPLOAD ----------
 app.post("/upload", upload.single("photo"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: "No image uploaded" });
@@ -120,60 +128,64 @@ app.post("/upload", upload.single("photo"), async (req, res) => {
   try {
     const metadata = await exifr.parse(req.file.path).catch(() => null);
 
-    const timestamp = normalizeTimestamp(metadata, req.body);
+    const timestamp = extractTimestamp(metadata);
     if (timestamp === null) {
       fs.unlinkSync(req.file.path);
-      return res.status(400).json({ success: false, error: "Could not determine timestamp from EXIF; please provide 'timestamp' in the upload form (ISO or seconds)." });
+      return res.status(400).json({
+        success: false,
+        error: "EXIF timestamp missing. Upload raw camera image."
+      });
     }
 
-    const stateCode = determineStateCode(metadata, req.body);
+    const stateCode = mapGPSToState(metadata);
     if (!stateCode) {
       fs.unlinkSync(req.file.path);
-      return res.status(400).json({ success: false, error: "Could not determine state from EXIF; please provide 'state' (state name) in the upload form." });
+      return res.status(400).json({
+        success: false,
+        error: "GPS metadata missing or unsupported region."
+      });
     }
 
-    // Compute commitment and private witness values
     const result = await commitAndSign(req.file.path, timestamp, stateCode);
 
-    // Store private witness in DB: NEVER expose these values in responses
     const witnessDoc = {
-      commitment: result.commitment.toString(), // decimal string
-      imageHash: result._private.imageHash.toString(),
+      commitment: result.commitment,
+      imageHash: result._private.imageHash,
       timestamp: Number(result._private.timestamp),
       stateCode: Number(result._private.stateCode),
-      nonce: result._private.nonce.toString(),
+      nonce: result._private.nonce,
       createdAt: new Date(),
     };
 
     await witnessesCol.insertOne(witnessDoc);
-
-    // Remove uploaded file bytes from server storage
     fs.unlinkSync(req.file.path);
 
-    // Return only the commitment to the client (decimal string)
-    return res.json({ success: true, commitment: result.commitment.toString() });
+    return res.json({
+      success: true,
+      commitment: result.commitment
+    });
+
   } catch (err) {
     console.error(err);
-    try { if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch(e){}
+    try {
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch {}
     return res.status(500).json({ success: false, error: "Upload failed" });
   }
 });
 
-// ---------- PROVE: server-side witness generation & proving ----------
+// ---------- PROVE ----------
 app.post("/prove/query", async (req, res) => {
   try {
     const { commitment, minTimestamp, maxTimestamp, expectedState } = req.body;
-    if (!commitment || minTimestamp === undefined || maxTimestamp === undefined || expectedState === undefined) {
-      return res.status(400).json({ success: false, error: "Missing required fields: commitment, minTimestamp, maxTimestamp, expectedState" });
-    }
 
-    // Lookup private witness by commitment
     const witness = await witnessesCol.findOne({ commitment: commitment.toString() });
     if (!witness) {
       return res.status(404).json({ success: false, error: "Commitment not found" });
     }
 
-    // Build circuit input, using decimal strings for BigInt values
     const input = {
       commitment: commitment.toString(),
       minTimestamp: minTimestamp.toString(),
@@ -185,52 +197,40 @@ app.post("/prove/query", async (req, res) => {
       nonce: witness.nonce.toString(),
     };
 
-    // Run the full prove flow (witness + groth16 prove) server-side
-    const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, WASM_PATH, ZKEY_PATH);
+    const { proof, publicSignals } =
+      await snarkjs.groth16.fullProve(input, WASM_PATH, ZKEY_PATH);
 
     return res.json({ success: true, proof, publicSignals });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, error: "Proof generation failed" });
   }
 });
 
-// ---------- VERIFY: accept proof + publicSignals, verify, return boolean validity ----------
+// ---------- VERIFY ----------
 app.post("/verify/query", async (req, res) => {
   try {
     const { proof, publicSignals } = req.body;
-    if (!proof || !publicSignals) return res.status(400).json({ success: false, error: "Missing proof or publicSignals" });
 
     const verificationKey = JSON.parse(fs.readFileSync(VK_PATH, "utf-8"));
-
     const ok = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
+
     if (!ok) {
-      return res.status(400).json({ success: false, error: "Invalid proof / proof not authentic" });
+      return res.status(400).json({ success: false, error: "Invalid proof" });
     }
 
-    // Extract the public boolean 'valid' from publicSignals.
-    // publicSignals ordering depends on the compiled circuit; for this circuit the first public is 'valid'.
-    const validSignal = publicSignals && publicSignals.length > 0 ? publicSignals[0] : undefined;
-    const valid = validSignal && (validSignal.toString() === '1' || validSignal === 1);
+    const validSignal = publicSignals?.[0];
+    const valid = validSignal?.toString() === "1";
 
-    return res.json({ success: true, valid: !!valid });
+    return res.json({ success: true, valid });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, error: "Verification failed" });
   }
 });
 
-// legacy verify endpoint (kept for compatibility)
-app.post("/verify", async (req, res) => {
-  try {
-    const { proof, publicSignals } = req.body;
-    const verificationKey = JSON.parse(fs.readFileSync(VK_PATH, "utf-8"));
-    const verified = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
-    res.json({ success: true, verified });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Verification failed" });
-  }
+app.listen(PORT, () => {
+  console.log(`ZK-Camera backend running on port ${PORT}`);
 });
-
-app.listen(PORT, () => console.log(`ZK-Camera backend running on port ${PORT}`));

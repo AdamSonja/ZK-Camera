@@ -46,6 +46,8 @@ The system proves consistency and non-tampering after commitment,
 not real-world truth or capture-time authenticity.
 
 High-Level Architecture
+flowchart LR
+
 
 Cryptographic Design
 Commitment Scheme
